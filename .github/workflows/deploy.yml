@@ -1,0 +1,104 @@
+name: Deploy
+
+on:
+  workflow_dispatch:
+  push:
+    tags: ['v*']
+
+concurrency:
+  group: deploy-production
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  verify:
+    uses: ./.github/workflows/ci.yml
+
+  deploy:
+    needs: verify
+    runs-on: ubuntu-latest
+    environment: production
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Autenticar en AWS
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION }}
+          role-session-name: gha-deploy-node-api-${{ github.run_id }}
+
+      - name: Login en ECR
+        id: ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Construir y publicar la imagen
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          platforms: linux/amd64
+          push: true
+          tags: |
+            ${{ steps.ecr.outputs.registry }}/${{ vars.ECR_REPOSITORY }}:${{ github.sha }}
+            ${{ steps.ecr.outputs.registry }}/${{ vars.ECR_REPOSITORY }}:latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Actualizar la funcion Lambda
+        run: |
+          set -euo pipefail
+
+          image="${{ steps.ecr.outputs.registry }}/${{ vars.ECR_REPOSITORY }}:${{ github.sha }}"
+          echo "Desplegando $image"
+
+          aws lambda update-function-code \
+            --function-name "${{ vars.LAMBDA_FUNCTION_NAME }}" \
+            --image-uri "$image" \
+            --publish \
+            --no-cli-pager
+
+          aws lambda wait function-updated \
+            --function-name "${{ vars.LAMBDA_FUNCTION_NAME }}"
+
+          estado=$(aws lambda get-function-configuration \
+            --function-name "${{ vars.LAMBDA_FUNCTION_NAME }}" \
+            --query 'LastUpdateStatus' --output text)
+
+          echo "LastUpdateStatus: $estado"
+          [ "$estado" = "Successful" ] || exit 1
+
+  smoke:
+    needs: deploy
+    runs-on: ubuntu-latest
+    environment: production
+    steps:
+      # Este servicio no es publico, asi que se comprueba a traves de go-api: un
+      # 200 aqui significa que el gateway lo alcanzo y le reenvio el token.
+      #
+      # Requiere que go-api este desplegado. Si aun no lo esta, este paso falla, y
+      # es correcto que falle.
+      - name: Estadisticas a traves del gateway
+        run: |
+          set -euo pipefail
+
+          token=$(curl -fsS --retry 5 --retry-delay 5 \
+            -X POST "${{ vars.PUBLIC_BASE_URL }}/api/v1/auth/login" \
+            -H 'Content-Type: application/json' \
+            -d "{\"username\":\"${{ vars.SMOKE_USERNAME }}\",\"password\":\"${{ secrets.SMOKE_PASSWORD }}\"}" \
+            | jq -r '.data.accessToken')
+
+          [ -n "$token" ] && [ "$token" != "null" ] || { echo "No se obtuvo token"; exit 1; }
+
+          curl -fsS -X POST "${{ vars.PUBLIC_BASE_URL }}/api/v1/factorization" \
+            -H "Authorization: Bearer $token" \
+            -H 'Content-Type: application/json' \
+            -d '{"matrix":[[2,0],[0,3]]}' \
+            | jq -e '.data.statistics.q.isDiagonal == true
+                     and .data.statistics.r.isDiagonal == true' > /dev/null
+
+          echo "Estadisticas verificadas a traves de go-api"

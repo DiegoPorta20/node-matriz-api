@@ -1,0 +1,30 @@
+# Entorno. Contiene el JWT_SECRET real: nunca se versiona.
+.env
+.env.local
+.env.*.local
+
+# Dependencias
+node_modules/
+
+# Salida de la compilacion de TypeScript
+dist/
+*.tsbuildinfo
+
+# Cobertura
+coverage/
+
+# Logs
+*.log
+npm-debug.log*
+yarn-error.log
+
+# Editores
+.idea/
+.vscode/*
+!.vscode/extensions.json
+*.swp
+*~
+
+# Sistema operativo
+.DS_Store
+Thumbs.db
