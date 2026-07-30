@@ -5,17 +5,6 @@ import { UnauthorizedError } from '../errors';
 
 const BEARER_PREFIX = 'Bearer ';
 
-/**
- * Cabecera alternativa para el token del usuario.
- *
- * Cuando go-api invoca a este servicio a través de una Function URL con
- * autenticación IAM, `Authorization` la ocupa la firma SigV4 de AWS y el JWT del
- * usuario no cabe ahí. Se acepta en las dos: esta para la ruta firmada y
- * `Authorization` para la directa (docker compose, red interna).
- *
- * La validación es idéntica en los dos casos: cambia dónde viaja el token, no
- * cuánto se confía en él.
- */
 const ACCESS_TOKEN_HEADER = 'X-Access-Token';
 
 export const authenticate = (verifier: AccessTokenVerifier): RequestHandler => {
@@ -26,11 +15,6 @@ export const authenticate = (verifier: AccessTokenVerifier): RequestHandler => {
   };
 };
 
-/**
- * Se mira X-Access-Token antes que Authorization, y el orden importa: en la ruta
- * firmada, `Authorization` contiene `AWS4-HMAC-SHA256 ...` y no un Bearer, así
- * que examinarla primero produciría un 401 con una petición perfectamente válida.
- */
 const extractToken = (request: Request): string => {
   const fromDedicatedHeader = (request.header(ACCESS_TOKEN_HEADER) ?? '').trim();
   if (fromDedicatedHeader !== '') {
