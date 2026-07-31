@@ -27,6 +27,14 @@ env:
   LAMBDA_FUNCTION_NAME: ${{ vars.LAMBDA_FUNCTION_NAME || secrets.LAMBDA_FUNCTION_NAME }}
   NODE_API_URL: ${{ vars.NODE_API_URL || vars.API_BASE_URL || vars.PUBLIC_API_URL || secrets.NODE_API_URL || secrets.API_BASE_URL || secrets.PUBLIC_API_URL || '' }}
   CORS_ALLOWED_ORIGINS: ${{ vars.CORS_ALLOWED_ORIGINS || secrets.CORS_ALLOWED_ORIGINS || '' }}
+
+  # Configuracion de la funcion. update-function-configuration REEMPLAZA el mapa de variables
+  # completo, asi que lo que falte en este bloque desaparece de la Lambda en el siguiente
+  # despliegue. JWT_SECRET es obligatoria: sin ella node-api no arranca.
+  JWT_SECRET: ${{ secrets.JWT_SECRET }}
+  NODE_API_PORT: ${{ vars.NODE_API_PORT || '3000' }}
+  LOG_LEVEL: ${{ vars.LOG_LEVEL || 'info' }}
+
   SMOKE_USERNAME: ${{ vars.SMOKE_USERNAME || secrets.SMOKE_USERNAME }}
 
 jobs:
@@ -106,6 +114,19 @@ jobs:
             exit 1
           fi
 
+          # Se valida antes de tocar AWS porque el paso de configuración reemplaza el mapa
+          # entero: desplegar sin JWT_SECRET deja node-api sin arrancar, y el gateway responde
+          # 502 en cada factorización.
+          if [ -z "${JWT_SECRET:-}" ]; then
+            echo "Falta el secret JWT_SECRET en GitHub Actions."
+            echo "Tiene que ser el mismo valor que en go-api: node-api valida lo que go-api firma."
+            exit 1
+          fi
+          if [ ${#JWT_SECRET} -lt 32 ]; then
+            echo "JWT_SECRET tiene ${#JWT_SECRET} caracteres y el mínimo son 32."
+            exit 1
+          fi
+
       - name: Autenticar en AWS con OIDC
         if: ${{ env.AWS_DEPLOY_ROLE_ARN != '' }}
         uses: aws-actions/configure-aws-credentials@v4
@@ -169,10 +190,26 @@ jobs:
           aws lambda wait function-updated \
             --function-name "$LAMBDA_FUNCTION_NAME"
 
+          # El mapa se construye con jq y no interpolando la forma corta Variables={K=V,...}:
+          # esa notacion se rompe con cualquier valor que contenga una coma o un igual, y aqui
+          # viaja un secreto. La salida se descarta porque incluye las variables de la funcion.
+          entorno=$(jq -n \
+            --arg cors_allowed_origins "$CORS_ALLOWED_ORIGINS" \
+            --arg jwt_secret "$JWT_SECRET" \
+            --arg node_api_port "$NODE_API_PORT" \
+            --arg log_level "$LOG_LEVEL" \
+            '{Variables: {
+              CORS_ALLOWED_ORIGINS: $cors_allowed_origins,
+              JWT_SECRET: $jwt_secret,
+              NODE_API_PORT: $node_api_port,
+              LOG_LEVEL: $log_level,
+              NODE_ENV: "production"
+            }}')
+
           aws lambda update-function-configuration \
             --function-name "$LAMBDA_FUNCTION_NAME" \
-            --environment "Variables={CORS_ALLOWED_ORIGINS=$CORS_ALLOWED_ORIGINS}" \
-            --no-cli-pager
+            --environment "$entorno" \
+            --no-cli-pager > /dev/null
 
           aws lambda wait function-updated \
             --function-name "$LAMBDA_FUNCTION_NAME"
