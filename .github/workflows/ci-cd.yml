@@ -166,6 +166,9 @@ jobs:
             --publish \
             --no-cli-pager
 
+          aws lambda wait function-updated \
+            --function-name "$LAMBDA_FUNCTION_NAME"
+
           aws lambda update-function-configuration \
             --function-name "$LAMBDA_FUNCTION_NAME" \
             --environment "Variables={CORS_ALLOWED_ORIGINS=$CORS_ALLOWED_ORIGINS}" \
