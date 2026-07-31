@@ -1,4 +1,5 @@
 import express from 'express';
+import cors from 'cors';
 import helmet from 'helmet';
 import swaggerUi from 'swagger-ui-express';
 import type { Express } from 'express';
@@ -15,9 +16,15 @@ const MAX_BODY_SIZE = '1mb';
 
 export const createServer = (logger: Logger, dependencies: RouteDependencies): Express => {
   const app = express();
+  const allowedOrigins = (process.env.CORS_ALLOWED_ORIGINS ?? 'http://localhost:4200').split(',').map((origin) => origin.trim()).filter(Boolean);
 
   app.disable('x-powered-by');
   app.use(helmet());
+  app.use(cors({
+    origin: allowedOrigins,
+    methods: ['GET', 'POST', 'OPTIONS'],
+    allowedHeaders: ['Content-Type', 'Authorization', 'Accept'],
+  }));
   app.use(requestLogger(logger));
   app.use(express.json({ limit: MAX_BODY_SIZE }));
 
