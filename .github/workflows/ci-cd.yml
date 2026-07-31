@@ -132,16 +132,15 @@ jobs:
       - uses: docker/setup-buildx-action@v3
 
       - name: Construir y publicar la imagen
-        uses: docker/build-push-action@v6
-        with:
-          context: .
-          platforms: linux/amd64
-          push: true
-          tags: |
-            ${{ steps.ecr.outputs.registry }}/${{ env.ECR_REPOSITORY }}:${{ github.sha }}
-            ${{ steps.ecr.outputs.registry }}/${{ env.ECR_REPOSITORY }}:latest
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+        run: |
+          set -euo pipefail
+          docker build \
+            --platform linux/amd64 \
+            --tag "${{ steps.ecr.outputs.registry }}/${{ env.ECR_REPOSITORY }}:${{ github.sha }}" \
+            --tag "${{ steps.ecr.outputs.registry }}/${{ env.ECR_REPOSITORY }}:latest" \
+            .
+          docker push "${{ steps.ecr.outputs.registry }}/${{ env.ECR_REPOSITORY }}:${{ github.sha }}"
+          docker push "${{ steps.ecr.outputs.registry }}/${{ env.ECR_REPOSITORY }}:latest"
 
       - name: Actualizar la funcion Lambda
         run: |
